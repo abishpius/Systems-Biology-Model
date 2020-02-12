@@ -1,0 +1,109 @@
+#!/usr/bin/python3
+
+#import necessary modules
+from pysb import *
+from pysb.macros import catalyze
+from pysb.macros import catalyze_one_step
+from pysb.macros import bind
+from pysb.integrate import odesolve
+import numpy as np
+import sys
+
+#set inh_kf to the first commandline argument interpreted as a float
+inh_kf = float(sys.argv[1])
+
+#these are our default reaction rates
+kf_bind = 1e-5
+kr_bind = 1e-1
+kcat = 1e-1
+
+Model()
+
+Monomer('INH', ['s'])
+Monomer('PG3', ['s'])
+Monomer('ADP', ['s'])
+Monomer('NADH', ['c'])
+Monomer('PG2', ['s'])
+Monomer('PEP', ['c'])
+Monomer('PYR', ['s'])
+Monomer('ATP', ['s'])
+Monomer('NAD', ['c'])
+Monomer('LAC', ['s'])
+
+Monomer('PGM', ['s'])
+Monomer('ENO', ['s'])
+Monomer('PKM', ['s','c'])
+Monomer('LDH', ['s','c'])
+
+
+Parameter('INH_0', 5000)
+Parameter('PG3_0', 20000)
+Parameter('ADP_0', 10000)
+#Parameter('ATP_0', 0)
+Parameter('NADH_0', 2000)
+#Parameter('NAD_0', 0)
+Parameter('PGM_0', 5000)
+Parameter('ENO_0', 5000)
+Parameter('PKM_0', 5000)
+Parameter('LDH_0', 1000)
+#Parameter('PG2_0', 0)
+#Parameter('PEP_0', 0)
+#Parameter('PYR_0', 0)
+#Parameter('LAC_0', 0)
+Parameter('KR_Bind', kr_bind)
+Parameter('KF_Bind', kf_bind)
+Parameter('KCAT', kcat)
+
+
+Initial(INH(s=None), INH_0)
+Initial(PG3(s=None), PG3_0)
+Initial(ADP(s=None), ADP_0)
+#Initial(ATP(s=None), ATP_0)
+Initial(NADH(c=None), NADH_0)
+#Initial(NAD(s=None), NAD_0)
+Initial(PGM(s=None), PGM_0)
+Initial(ENO(s=None), ENO_0)
+Initial(PKM(s=None,c=None), PKM_0)
+Initial(LDH(s=None,c=None), LDH_0)
+#Initial(PG2(s=None), PG2_0)
+#Initial(PEP(s=None), PEP_0)
+#Initial(PYR(s=None), PYR_0)
+#Initial(LAC(s=None), LAC_0)
+
+#60% Implement the catalysis of 3-PG (PG3) by PGAM (PGM) to 2-PG (PG2)
+bind(INH, 's', PGM, 's', [inh_kf, kr_bind]) 
+
+#70% Implement the catalysis of 2-PG (PG2) by enolase (ENO) to PEP
+catalyze(PGM(s=None), 's', PG3(), 's', PG2(s=None), (kf_bind, kr_bind, kcat))
+catalyze(ENO(), 's', PG2(), 's', PEP(c=None), (kf_bind, kr_bind, kcat))
+
+#80% Implement the catalysis of phosphoenolpyruvate (PEP) by pyruvate kinase (PKM) to pyruvate (PYR)
+bind(ADP(s=None), 's', PKM(s=None), 's', [kf_bind, kr_bind])
+bind(PEP(c=None), 'c', PKM(c=2) , 'c', [kf_bind, kr_bind])
+Rule('pkm_adp_pep_complex', PKM(s=1,c=2) % ADP(s=1) % PEP(c=2) >> ATP(s=None)+ PKM(s=None,c=None) + PYR(s=None), KCAT)
+
+#90% Implement the forward only catalysis of pyruvate (PYR) by lactate dehydrogenase (LDH) to lactate (LAC)
+bind(NADH(c=None), 'c', LDH(c=2), 'c', [kf_bind, kr_bind])
+bind(PYR(s=None), 's', LDH(s=None), 's', [kf_bind, kr_bind])
+Rule('LDHforward', LDH(s=1,c=2) % PYR(s=1) % NADH(c=2) >> LAC(s=None) + NAD(c=None) + LDH(s=None,c=None), KCAT)
+
+#100% Implement the reversible catalysis of pyruvate (PYR) by lactate dehydrogenase (LDH) to lactate (LAC)
+bind(NAD(c=None), 'c', LDH(c=2), 'c', [kf_bind, kr_bind])
+bind(LAC(s=None), 's', LDH(s=None), 's', [kf_bind, kr_bind])
+Rule('LDHreverse', LDH(s=1,c=2) % NAD(c=2) % LAC(s=1) >> LDH(s=None,c=None) + PYR(s=None) + NADH(c=None), KCAT)
+
+Observable('oNAD', NAD(c=None))
+Observable('oLAC', LAC(s=None))
+Observable('oPYR', PYR(s=None))
+Observable('oPEP', PEP(c=None))
+Observable('oPG2', PG2(s=None))
+Observable('oPG3', PG3(s=None))
+
+#solve for several datapoints from 0 to 600 seconds
+t = np.linspace(0,600)
+out = odesolve(model,t)
+
+#print out observables
+for i in range(0,len(out),7):
+    print('NAD+: %.0f  LAC: %.0f  PYR: %.0f  PEP: %.0f  PG2: %.0f  PG3: %.0f' % \
+  (out['oNAD'][i],out['oLAC'][i],out['oPYR'][i],out['oPEP'][i],out['oPG2'][i],out['oPG3'][i]))
